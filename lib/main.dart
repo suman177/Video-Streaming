@@ -38,12 +38,14 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  
+  final thumbWidth = 100;
+  final thumbHeight = 150;
+  List<VideoInfo> _videos = <VideoInfo>[];
   double _progress = 0.0;
   bool _canceled = false;
+  bool _processing = false;
   int _videoDuration = 0;
   String _processPhase = "";
-
 
   @override
   void initState() {
@@ -55,7 +57,6 @@ class _MyHomePageState extends State<MyHomePage> {
         int videoFrameNumber,
         double videoQuality,
         double videoFps) {
-      
       if (_canceled) return;
 
       setState(() {
@@ -87,10 +88,16 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void _onUploadProgress(event) {
-    if(event.type == StorageTaskEventType.progress) {
-      final double progess = event.snapshot.byteTransferred / event.snapshot.totalByteCOunt
+    if (event.type == StorageTaskEventType.progress) {
+      final double progress =
+          event.snapshot.byteTransferred / event.snapshot.totalByteCount;
+
+      setState(() {
+        _progress = progress;
+      });
     }
   }
+
   //This method takes filepath foldreName as paramater and upload the file to the server
   //It will make a StorageReference on the server and handle live events and so on.
   Future<String> _uploadFile(filepath, folderName) async {
@@ -107,45 +114,165 @@ class _MyHomePageState extends State<MyHomePage> {
     return videoUrl;
   }
 
-  //This method fixes the HLS file. '.ts' and '.m3u8' files are edited here to point to correct location which is cloud 
+  //This method fixes the HLS file. '.ts' and '.m3u8' files are edited here to point to correct location which is cloud
   //after we upload the video.
   void _updatePlaylistUrls(File file, String videoName) {
     final lines = file.readAsLinesSync();
-    var updatedLines =List<String>();
+    var updatedLines = List<String>();
 
-    for(final String line in lines) {
+    for (final String line in lines) {
       var updatedLine = line;
-      if(line.contains('.ts') || line.contains('.m3u8')){
-          updatedLine = '$videoName%2F$line?alt=media';
+      if (line.contains('.ts') || line.contains('.m3u8')) {
+        updatedLine = '$videoName%2F$line?alt=media';
       }
       updatedLines.add(updatedLine);
     }
 
-    final updatedContents = updatedLines.reduce((value, element)=> value + '\n' + element);
+    final updatedContents =
+        updatedLines.reduce((value, element) => value + '\n' + element);
 
     file.writeAsStringSync(updatedContents);
   }
 
   Future<String> _uploadHLSFiles(dirPath, videoName) async {
-    
     final videosDir = Directory(dirPath);
 
     var playlistUrl = '';
-    
+
     final files = videosDir.listSync();
-    int i =1;
+    int i = 1;
     for (FileSystemEntity file in files) {
       final fileName = p.basename(file.path);
       final fileExtension = getFileExtension(fileName);
+      if (fileExtension == 'm3u8') _updatePlaylistUrls(file, videoName);
 
+      setState(() {
+        _processPhase = "Uploading video file $i out of ${files.length}";
+        _progress = 0.0;
+      });
+
+      final downloadUrl = await _uploadFile(file.path, videoName);
+
+      if (fileName == 'master.m3u8') {
+        playlistUrl = downloadUrl;
+      }
+      i++;
     }
-
+    return playlistUrl;
   }
 
   //This method gives the extension of file to verify weather to upload or not
   //example will return .m3u8 if it is m3u8 file.
   String getFileExtension(String fileName) {
-    final exploded =fileName.split('.');
+    final exploded = fileName.split('.');
     return exploded[exploded.length - 1];
+  }
+
+  //The Raw Video File is Started to prepare from here
+  //READ IT PROPERLY!
+  Future<void> _processVideo(File rawVideoFile) async {
+    final String rand = '${new Random().nextInt(10000)}';
+    final videoName = 'video$rand';
+    final Directory extDir = await getApplicationDocumentsDirectory();
+    final outDirPath = '${extDir.path}/Videos/$videoName';
+    final videosDir = new Directory(outDirPath);
+    videosDir.createSync(recursive: true);
+
+    final rawVideoPath = rawVideoFile.path;
+    final info = await EncodingProvider.getMediaInformation(rawVideoPath);
+    final aspectRatio = EncodingProvider.getAspectRatio(info);
+
+    setState(() {
+      _processPhase = 'Generating Thumbnail';
+      _videoDuration = EncodingProvider.getDuration(info);
+      _progress = 0.0;
+    });
+
+    final thumbFilePath =
+        await EncodingProvider.getThumb(rawVideoPath, thumbWidth, thumbHeight);
+
+    setState(() {
+      _processPhase = 'Encoding Video';
+      _progress = 0.0;
+    });
+
+    final encoderFilesDir =
+        await EncodingProvider.encodeHLS(rawVideoPath, outDirPath);
+
+    setState(() {
+      _processPhase = 'Uploading Thumbnail to firebase storage';
+      _progress = 0.0;
+    });
+
+    final thumbUrl = await _uploadFile(thumbFilePath, 'thumbnail');
+    final videoUrl = await _uploadHLSFiles(encoderFilesDir, videoName);
+
+    final videoInfo = VideoInfo(
+        videoUrl: videoUrl,
+        thumbUrl: thumbUrl,
+        coverUrl: thumbUrl,
+        aspectRatio: aspectRatio,
+        uploadedAt: DateTime.now().millisecondsSinceEpoch,
+        videoName: videoName);
+
+    await FirebaseProvider.saveVideo(videoInfo);
+
+    setState(() {
+      _processPhase = '';
+      _progress = 0.0;
+      _processing = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    throw UnimplementedError();
+  }
+
+  _getListView() {
+    return ListView.builder(
+      padding: const EdgeInsets.all(8),
+      itemCount: _videos.length,
+      itemBuilder: (BuildContext context, int index) {
+        final video = _videos[index];
+        return GestureDetector(
+          onTap: () {
+            Navigator.push(context, MaterialPageRoute(builder: (context) {
+              return Player(video: video);
+            }));
+          },
+          child: Card(
+            child: new Container(
+              padding: new EdgeInsets.all(10.0),
+              child: Stack(
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Stack(
+                        children: [
+                          Container(
+                            width: thumbWidth.toDouble(),
+                            height: thumbHeight.toDouble(),
+                            child: Center(child: CircularProgressIndicator()),
+                          ),
+                          ClipRRect(
+                            borderRadius: new BorderRadius.circular(8.0),
+                            child: FadeInImage.memoryNetwork(
+                                placeholder: kTransparentImage,
+                                image: video.thumbUrl),
+                          )
+                        ],
+                      )
+                    ],
+                  ),
+                  Expanded(child: Container())
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }

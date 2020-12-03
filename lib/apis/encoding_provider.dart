@@ -68,10 +68,13 @@ class EncodingProvider {
     return outDirPath;
   }
 
-  //
+  //This method uses FFmpeg for client side video encoding.
+  //This method returns essential variable needed to calculate time, size, bitrate, speed.
   static void enableStatisticsCallback(Function cb) {
     return _config.enableStatisticsCallback((time, size, bitrate, speed,
             videoFrameNumber, videoQuality, videoFps) =>
         cb);
   }
+
+  //
 }
