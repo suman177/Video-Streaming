@@ -28,6 +28,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+//Stateful Wigets To have multiple states of the widgets instanciated on this class.
 class MyHomePage extends StatefulWidget {
   MyHomePage({Key key, this.title}) : super(key: key);
 
@@ -46,10 +47,12 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _processing = false;
   int _videoDuration = 0;
   String _processPhase = "";
+  final bool _debugMode = false;
+  bool _imagePickerActive = false;
 
   @override
   void initState() {
-    //
+    //This method calculates the progress rate and then set state accordingly.
     EncodingProvider.enableStatisticsCallback((int time,
         int size,
         double bitrate,
@@ -226,9 +229,54 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    throw UnimplementedError();
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.title),
+      ),
+      body: Center(child: _processing ? _getProgressBar() : _getListView()),
+      floatingActionButton: FloatingActionButton(
+        child: _processing
+            ? CircularProgressIndicator(
+                valueColor: new AlwaysStoppedAnimation<Color>(Colors.white),
+              )
+            : Icon(Icons.add),
+        onPressed: _takeVideo,
+      ),
+    );
   }
 
+  void _takeVideo() async {
+    var videoFile;
+    if (_debugMode) {
+      videoFile = File(
+          '/storage/emulated/0/Android/data/com.example.VideoStreaming/files/Pictures/ebbafabc-dcbe-433b-93dd-80e7777ee4704451355941378265171.mp4');
+    } else {
+      if (_imagePickerActive) return;
+
+      _imagePickerActive = true;
+      videoFile = await ImagePicker.pickVideo(source: ImageSource.camera);
+      _imagePickerActive = false;
+
+      if (videoFile == null) return;
+    }
+
+    setState(() {
+      _processing = true;
+    });
+
+    try {
+      await _processVideo(videoFile);
+    } catch (e) {
+      print('${e.toString()}');
+    } finally {
+      setState(() {
+        _processing = false;
+      });
+    }
+  }
+
+  //This widget provides the list view of the Videos stored in Cloud Firebase.
+  //This widget can start the video if the user pressed on the video.
   _getListView() {
     return ListView.builder(
       padding: const EdgeInsets.all(8),

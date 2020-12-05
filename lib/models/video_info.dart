@@ -12,6 +12,5 @@ class VideoInfo {
       this.thumbUrl,
       this.coverUrl,
       this.aspectRatio,
-      this.uploadedAt,
-      this.videoName});
+      this.uploadedAt});
 }
